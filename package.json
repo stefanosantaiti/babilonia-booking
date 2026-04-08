@@ -1,0 +1,8 @@
+{
+  "name": "babilonia-booking",
+  "version": "1.0.0",
+  "description": "Booking System Multi-Seller per BABILONIA",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.39.0"
+  }
+}

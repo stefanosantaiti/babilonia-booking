@@ -1,4 +1,4 @@
-// Admin Interface v2 - Supabase Direct
+// Admin Interface v2.1 - Supabase Direct, Config Locale
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.0/+esm';
 
 const SUPABASE_URL = 'https://esgjushznmidzdhqsyyx.supabase.co';
@@ -8,10 +8,23 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 let currentSeller = null;
 let sellerConfig = {
-  days: [1, 2, 3, 4, 5], // Lun-Ven default
+  days: [1, 2, 3, 4, 5],
   morning: ['09:00', '09:30', '10:00', '10:30', '11:00', '11:30'],
   afternoon: ['14:00', '14:30', '15:00', '15:30', '16:00', '16:30']
 };
+
+// Carica config da localStorage
+function loadConfig() {
+  const saved = localStorage.getItem('babilonia_config');
+  if (saved) {
+    sellerConfig = JSON.parse(saved);
+  }
+}
+
+// Salva config in localStorage
+function saveConfigLocal() {
+  localStorage.setItem('babilonia_config', JSON.stringify(sellerConfig));
+}
 
 // Carica seller
 async function loadSellers() {
@@ -45,21 +58,7 @@ async function login() {
     return;
   }
   
-  // Carica configurazione salvata
-  const { data: config } = await supabase
-    .from('seller_configs')
-    .select('*')
-    .eq('seller_id', currentSeller)
-    .single();
-    
-  if (config) {
-    sellerConfig = {
-      days: config.days || [1, 2, 3, 4, 5],
-      morning: config.morning || ['09:00', '09:30', '10:00', '10:30', '11:00', '11:30'],
-      afternoon: config.afternoon || ['14:00', '14:30', '15:00', '15:30', '16:00', '16:30']
-    };
-  }
-  
+  loadConfig();
   renderConfigForm();
   document.getElementById('login-card').style.display = 'none';
   document.getElementById('dashboard').style.display = 'block';
@@ -81,6 +80,9 @@ function renderConfigForm() {
     { value: 0, label: 'Domenica' }
   ];
   
+  const morningTimes = ['08:00', '08:30', '09:00', '09:30', '10:00', '10:30', '11:00', '11:30', '12:00'];
+  const afternoonTimes = ['13:00', '13:30', '14:00', '14:30', '15:00', '15:30', '16:00', '16:30', '17:00', '17:30', '18:00'];
+  
   container.innerHTML = `
     <div class="config-section">
       <h3>📅 Giorni disponibili</h3>
@@ -96,9 +98,9 @@ function renderConfigForm() {
     </div>
     
     <div class="config-section">
-      <h3>🕐 Fascia mattina</h3>
+      <h3>🕐 Mattina</h3>
       <div class="time-grid">
-        ${['08:00', '08:30', '09:00', '09:30', '10:00', '10:30', '11:00', '11:30', '12:00'].map(t => `
+        ${morningTimes.map(t => `
           <label class="checkbox-label">
             <input type="checkbox" name="morning" value="${t}"
               ${sellerConfig.morning.includes(t) ? 'checked' : ''}>
@@ -109,9 +111,9 @@ function renderConfigForm() {
     </div>
     
     <div class="config-section">
-      <h3>🕐 Fascia pomeriggio</h3>
+      <h3>🕐 Pomeriggio</h3>
       <div class="time-grid">
-        ${['13:00', '13:30', '14:00', '14:30', '15:00', '15:30', '16:00', '16:30', '17:00', '17:30', '18:00'].map(t => `
+        ${afternoonTimes.map(t => `
           <label class="checkbox-label">
             <input type="checkbox" name="afternoon" value="${t}"
               ${sellerConfig.afternoon.includes(t) ? 'checked' : ''}>
@@ -126,7 +128,7 @@ function renderConfigForm() {
 }
 
 // Salva configurazione
-async function saveConfig() {
+function saveConfig() {
   const days = Array.from(document.querySelectorAll('input[name="day"]:checked')).map(cb => parseInt(cb.value));
   const morning = Array.from(document.querySelectorAll('input[name="morning"]:checked')).map(cb => cb.value);
   const afternoon = Array.from(document.querySelectorAll('input[name="afternoon"]:checked')).map(cb => cb.value);
@@ -142,23 +144,8 @@ async function saveConfig() {
   }
   
   sellerConfig = { days, morning, afternoon };
-  
-  // Salva su Supabase
-  const { error } = await supabase
-    .from('seller_configs')
-    .upsert({ 
-      seller_id: currentSeller, 
-      days, 
-      morning, 
-      afternoon,
-      updated_at: new Date().toISOString()
-    });
-    
-  if (error) {
-    showStatus('config-status', 'Errore salvataggio: ' + error.message, false);
-  } else {
-    showStatus('config-status', 'Configurazione salvata!', true);
-  }
+  saveConfigLocal();
+  showStatus('config-status', 'Configurazione salvata!', true);
 }
 
 // Genera slot
@@ -168,7 +155,7 @@ async function generateSlots() {
   const today = new Date();
   const slots = [];
   
-  // Cancella slot futuri
+  // Cancella slot futuri esistenti
   const todayStr = today.toISOString().split('T')[0];
   await supabase
     .from('slots')
@@ -232,7 +219,6 @@ async function loadSlots() {
     .from('slots')
     .select('*')
     .eq('seller_id', currentSeller)
-    .eq('available', true)
     .order('date', { ascending: true })
     .order('time', { ascending: true });
     
@@ -258,7 +244,8 @@ async function loadSlots() {
     html += `<h3 style="margin: 20px 0 10px 0; color: #1a1a2e;">${formatDate(date)}</h3>`;
     html += '<div class="slots-grid">';
     byDate[date].forEach(slot => {
-      html += `<div class="slot slot-available" onclick="toggleSlot('${slot.id}', false)">${slot.time}</div>`;
+      const className = slot.available ? 'slot-available' : 'slot-unavailable';
+      html += `<div class="slot ${className}" onclick="toggleSlot('${slot.id}', ${!slot.available})">${slot.time}</div>`;
     });
     html += '</div>';
   });

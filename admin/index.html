@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin - Gestione Appuntamenti</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+            background: #1a1a2e; 
+            min-height: 100vh; 
+            padding: 20px; 
+            color: #333; 
+        }
+        .container { max-width: 900px; margin: 0 auto; }
+        .header { 
+            text-align: center; 
+            padding: 30px 20px; 
+            color: #fff; 
+            background: linear-gradient(135deg, #d4af37 0%, #c5a028 100%);
+            border-radius: 16px;
+            margin-bottom: 20px;
+        }
+        .header h1 { font-size: 1.8rem; font-weight: 300; }
+        .card { 
+            background: #fff; 
+            border-radius: 16px; 
+            padding: 25px; 
+            margin-bottom: 20px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+        }
+        .card h2 { 
+            color: #1a1a2e; 
+            margin-bottom: 20px; 
+            font-size: 1.3rem;
+            border-bottom: 2px solid #d4af37;
+            padding-bottom: 10px;
+        }
+        .seller-select { 
+            width: 100%; 
+            padding: 15px; 
+            font-size: 1rem; 
+            border: 2px solid #ddd; 
+            border-radius: 10px; 
+            margin-bottom: 20px;
+        }
+        .btn { 
+            padding: 12px 24px; 
+            background: linear-gradient(135deg, #d4af37 0%, #c5a028 100%); 
+            color: #fff; 
+            border: none; 
+            border-radius: 8px; 
+            font-size: 1rem; 
+            cursor: pointer; 
+            margin: 5px;
+        }
+        .btn-secondary {
+            background: #1a1a2e;
+        }
+        .btn-danger {
+            background: #e74c3c;
+        }
+        .slots-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+            gap: 10px;
+            margin-top: 20px;
+        }
+        .slot {
+            padding: 12px;
+            border-radius: 8px;
+            text-align: center;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .slot-available {
+            background: #2ecc71;
+            color: white;
+        }
+        .slot-unavailable {
+            background: #e74c3c;
+            color: white;
+            text-decoration: line-through;
+        }
+        .slot:hover {
+            transform: scale(1.05);
+        }
+        .appointments-list {
+            margin-top: 20px;
+        }
+        .appointment {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 10px;
+            border-left: 4px solid #d4af37;
+        }
+        .appointment-header {
+            font-weight: 600;
+            color: #1a1a2e;
+        }
+        .appointment-details {
+            color: #666;
+            font-size: 0.9rem;
+            margin-top: 5px;
+        }
+        .empty-state {
+            text-align: center;
+            color: #888;
+            padding: 40px;
+        }
+        .loading {
+            text-align: center;
+            color: #888;
+            padding: 20px;
+        }
+        .status-message {
+            padding: 15px;
+            border-radius: 8px;
+            margin: 15px 0;
+            display: none;
+        }
+        .status-success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .status-error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        @media (max-width: 600px) {
+            .slots-grid {
+                grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📅 Gestione Appuntamenti</h1>
+            <p>Admin Console - BABILONIA Booking</p>
+        </div>
+
+        <!-- Login -->
+        <div class="card" id="login-card">
+            <h2>🔐 Seleziona Consulente</h2>
+            <select id="seller-select" class="seller-select">
+                <option value="">-- Seleziona --</option>
+            </select>
+            <button class="btn" onclick="login()">Accedi</button>
+            <div id="login-status" class="status-message"></div>
+        </div>
+
+        <!-- Dashboard (nascosta fino al login) -->
+        <div id="dashboard" style="display: none;">
+            <!-- Azioni -->
+            <div class="card">
+                <h2>⚡ Azioni Rapide</h2>
+                <button class="btn" onclick="generateSlots()">🔄 Genera Slot 14 Giorni</button>
+                <button class="btn btn-secondary" onclick="loadSlots()">📋 Visualizza Slot</button>
+                <button class="btn btn-secondary" onclick="loadAppointments()">📅 Visualizza Appuntamenti</button>
+                <div id="action-status" class="status-message"></div>
+            </div>
+
+            <!-- Slot -->
+            <div class="card">
+                <h2>📅 Slot Disponibili</h2>
+                <div id="slots-container" class="loading">Seleziona un'azione...</div>
+            </div>
+
+            <!-- Appuntamenti -->
+            <div class="card">
+                <h2>👥 Appuntamenti Prenotati</h2>
+                <div id="appointments-container" class="loading">Seleziona un'azione...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'https://babiloniabooking.netlify.app/api';
+        let currentSeller = null;
+
+        // Carica lista seller
+        async function loadSellers() {
+            try {
+                const response = await fetch(`${API_BASE}/slots/sellers`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    const select = document.getElementById('seller-select');
+                    data.sellers.forEach(seller => {
+                        const option = document.createElement('option');
+                        option.value = seller.id;
+                        option.textContent = seller.name;
+                        select.appendChild(option);
+                    });
+                }
+            } catch (error) {
+                showStatus('login-status', 'Errore caricamento consulenti', false);
+            }
+        }
+
+        // Login
+        function login() {
+            const select = document.getElementById('seller-select');
+            currentSeller = select.value;
+            
+            if (!currentSeller) {
+                showStatus('login-status', 'Seleziona un consulente', false);
+                return;
+            }
+            
+            document.getElementById('login-card').style.display = 'none';
+            document.getElementById('dashboard').style.display = 'block';
+            loadSlots();
+        }
+
+        // Genera slot
+        async function generateSlots() {
+            showStatus('action-status', 'Generazione slot in corso...', true);
+            
+            try {
+                const response = await fetch(`${API_BASE}/slots`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        sellerId: parseInt(currentSeller), 
+                        action: 'regenerate' 
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    showStatus('action-status', data.message, true);
+                    loadSlots();
+                } else {
+                    showStatus('action-status', 'Errore: ' + data.error, false);
+                }
+            } catch (error) {
+                showStatus('action-status', 'Errore di connessione', false);
+            }
+        }
+
+        // Carica slot
+        async function loadSlots() {
+            const container = document.getElementById('slots-container');
+            container.innerHTML = '<div class="loading">Caricamento...</div>';
+            
+            try {
+                const response = await fetch(`${API_BASE}/slots?seller=${currentSeller}`);
+                const data = await response.json();
+                
+                if (data.success && data.slots.length > 0) {
+                    // Raggruppa per data
+                    const byDate = {};
+                    data.slots.forEach(slot => {
+                        if (!byDate[slot.date]) byDate[slot.date] = [];
+                        byDate[slot.date].push(slot);
+                    });
+                    
+                    let html = '';
+                    Object.keys(byDate).sort().forEach(date => {
+                        html += `<h3 style="margin: 20px 0 10px 0; color: #1a1a2e;">${formatDate(date)}</h3>`;
+                        html += '<div class="slots-grid">';
+                        byDate[date].forEach(slot => {
+                            html += `<div class="slot slot-available" onclick="toggleSlot('${slot.id}', ${!slot.available})">${slot.time}</div>`;
+                        });
+                        html += '</div>';
+                    });
+                    
+                    container.innerHTML = html;
+                } else {
+                    container.innerHTML = '<div class="empty-state">Nessuno slot disponibile. Clicca "Genera Slot 14 Giorni"</div>';
+                }
+            } catch (error) {
+                container.innerHTML = '<div class="empty-state">Errore caricamento slot</div>';
+            }
+        }
+
+        // Carica appuntamenti
+        async function loadAppointments() {
+            const container = document.getElementById('appointments-container');
+            container.innerHTML = '<div class="loading">Caricamento...</div>';
+            
+            try {
+                const response = await fetch(`${API_BASE}/slots/appointments?seller=${currentSeller}`);
+                const data = await response.json();
+                
+                if (data.success && data.appointments && data.appointments.length > 0) {
+                    let html = '<div class="appointments-list">';
+                    data.appointments.forEach(apt => {
+                        html += `
+                            <div class="appointment">
+                                <div class="appointment-header">${apt.client_name}</div>
+                                <div class="appointment-details">
+                                    📅 ${formatDate(apt.slots?.date || apt.date)} ⏰ ${apt.slots?.time || apt.time}<br>
+                                    📧 ${apt.client_email}${apt.client_phone ? ' | 📱 ' + apt.client_phone : ''}<br>
+                                    Stato: ${apt.status}
+                                </div>
+                            </div>
+                        `;
+                    });
+                    html += '</div>';
+                    container.innerHTML = html;
+                } else {
+                    container.innerHTML = '<div class="empty-state">Nessun appuntamento prenotato</div>';
+                }
+            } catch (error) {
+                container.innerHTML = '<div class="empty-state">Errore caricamento appuntamenti</div>';
+            }
+        }
+
+        // Toggle slot disponibilità
+        async function toggleSlot(slotId, available) {
+            try {
+                const response = await fetch(`${API_BASE}/slots`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ slotId, available })
+                });
+                
+                const data = await response.json();
+                if (data.success) {
+                    loadSlots();
+                }
+            } catch (error) {
+                console.error('Errore toggle slot:', error);
+            }
+        }
+
+        // Formatta data
+        function formatDate(dateStr) {
+            const date = new Date(dateStr);
+            return date.toLocaleDateString('it-IT', { 
+                weekday: 'short', 
+                day: 'numeric', 
+                month: 'short' 
+            });
+        }
+
+        // Mostra status
+        function showStatus(elementId, message, isSuccess) {
+            const el = document.getElementById(elementId);
+            el.textContent = message;
+            el.className = 'status-message ' + (isSuccess ? 'status-success' : 'status-error');
+            el.style.display = 'block';
+            setTimeout(() => el.style.display = 'none', 5000);
+        }
+
+        // Inizializza
+        loadSellers();
+    </script>
+</body>
+</html>

@@ -1,13 +1,41 @@
-// API Booking System con Supabase
-const { createClient } = require('@supabase/supabase-js');
+// API per gestione slot appuntamenti
+const fs = require('fs');
+const path = require('path');
 
-const SUPABASE_URL = 'https://esgjushznmidzdhqsyyx.supabase.co';
-const SUPABASE_KEY = process.env.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVzZ2p1c2h6bm1pZHpkaHFzeXl4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU2NTYwMTcsImV4cCI6MjA5MTIzMjAxN30.cKWfWEkgRTtPKbUduGgNxX6gF18Gqkjg2bWn6twQTbs';
+const DB_PATH = path.join('/tmp', 'booking-db.json');
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+// Inizializza database se non esiste
+function initDB() {
+  if (!fs.existsSync(DB_PATH)) {
+    const initialData = {
+      sellers: {
+        stefano: {
+          name: "Stefano",
+          email: "stefano@example.com",
+          slots: generateDefaultSlots(),
+          appointments: [],
+          pointsThisMonth: 0
+        },
+        marco: {
+          name: "Marco",
+          email: "marco@example.com", 
+          slots: generateDefaultSlots(),
+          appointments: [],
+          pointsThisMonth: 0
+        }
+      },
+      settings: {
+        appointmentDuration: 15,
+        bookingWindowDays: 14,
+        reminderHours: 24
+      }
+    };
+    fs.writeFileSync(DB_PATH, JSON.stringify(initialData, null, 2));
+  }
+}
 
-// Genera slot per 14 giorni
-async function generateSlotsForSeller(sellerId) {
+// Genera slot default per 14 giorni
+function generateDefaultSlots() {
   const slots = [];
   const today = new Date();
   
@@ -16,110 +44,89 @@ async function generateSlotsForSeller(sellerId) {
     date.setDate(today.getDate() + i);
     const dateStr = date.toISOString().split('T')[0];
     
+    // Orari disponibili (fittizi, modificabili dal consulente)
     const times = ['09:00', '09:30', '10:00', '10:30', '11:00', '11:30', 
                    '14:00', '14:30', '15:00', '15:30', '16:00', '16:30'];
     
     times.forEach(time => {
       slots.push({
-        id: `${sellerId}_${dateStr}_${time}`,
-        seller_id: sellerId,
+        id: `${dateStr}_${time}`,
         date: dateStr,
         time: time,
         available: true,
-        type: 'conoscitivo'
+        type: 'conoscitivo' // 15 min
       });
     });
   }
   
-  const { error } = await supabase
-    .from('slots')
-    .insert(slots);
-    
-  return !error;
+  return slots;
+}
+
+// Leggi database
+function readDB() {
+  initDB();
+  return JSON.parse(fs.readFileSync(DB_PATH, 'utf8'));
+}
+
+// Scrivi database
+function writeDB(data) {
+  fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
 }
 
 exports.handler = async (event, context) => {
   const method = event.httpMethod;
-  const path = event.path.replace('/.netlify/functions/slots-supabase', '').replace('/api/slots', '');
+  const path = event.path.replace('/.netlify/functions/slots', '').replace('/api/slots', '');
   
   try {
     // GET /slots - Ottieni slot disponibili
-    if (method === 'GET' && (path === '' || path === '/')) {
+    if (method === 'GET' && path === '' || path === '/') {
+      const db = readDB();
       const sellerId = event.queryStringParameters?.seller;
       const date = event.queryStringParameters?.date;
       
-      let query = supabase
-        .from('slots')
-        .select('*, sellers(name, email)')
-        .eq('available', true);
+      if (sellerId && db.sellers[sellerId]) {
+        let slots = db.sellers[sellerId].slots.filter(s => s.available);
+        if (date) {
+          slots = slots.filter(s => s.date === date);
+        }
+        return {
+          statusCode: 200,
+          body: JSON.stringify({ success: true, slots })
+        };
+      }
       
-      if (sellerId) query = query.eq('seller_id', sellerId);
-      if (date) query = query.eq('date', date);
-      
-      const { data: slots, error } = await query;
-      
-      if (error) throw error;
-      
-      return {
-        statusCode: 200,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ success: true, slots })
-      };
-    }
-    
-    // GET /sellers - Lista seller
-    if (method === 'GET' && path === '/sellers') {
-      const { data: sellers, error } = await supabase
-        .from('sellers')
-        .select('*')
-        .eq('active', true);
-        
-      if (error) throw error;
+      // Ritorna tutti i seller con slot disponibili
+      const allSlots = {};
+      Object.keys(db.sellers).forEach(id => {
+        allSlots[id] = {
+          name: db.sellers[id].name,
+          slots: db.sellers[id].slots.filter(s => s.available)
+        };
+      });
       
       return {
         statusCode: 200,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ success: true, sellers })
-      };
-    }
-    
-    // POST /sellers - Aggiungi seller
-    if (method === 'POST' && path === '/sellers') {
-      const data = JSON.parse(event.body);
-      const { name, email } = data;
-      
-      const { data: seller, error } = await supabase
-        .from('sellers')
-        .insert({ name, email })
-        .select()
-        .single();
-        
-      if (error) throw error;
-      
-      // Genera slot automatici
-      await generateSlotsForSeller(seller.id);
-      
-      return {
-        statusCode: 200,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ success: true, seller })
+        body: JSON.stringify({ success: true, sellers: allSlots })
       };
     }
     
     // POST /slots - Crea appuntamento
-    if (method === 'POST' && (path === '' || path === '/')) {
+    if (method === 'POST') {
       const data = JSON.parse(event.body);
-      const { slotId, clientName, clientEmail, clientPhone } = data;
+      const { sellerId, slotId, clientName, clientEmail, clientPhone } = data;
       
-      // Verifica slot disponibile
-      const { data: slot, error: slotError } = await supabase
-        .from('slots')
-        .select('*')
-        .eq('id', slotId)
-        .eq('available', true)
-        .single();
-        
-      if (slotError || !slot) {
+      const db = readDB();
+      const seller = db.sellers[sellerId];
+      
+      if (!seller) {
+        return {
+          statusCode: 404,
+          body: JSON.stringify({ error: 'Seller not found' })
+        };
+      }
+      
+      const slot = seller.slots.find(s => s.id === slotId);
+      if (!slot || !slot.available) {
         return {
           statusCode: 400,
           body: JSON.stringify({ error: 'Slot not available' })
@@ -127,95 +134,83 @@ exports.handler = async (event, context) => {
       }
       
       // Crea appuntamento
-      const appointmentId = `apt_${Date.now()}`;
-      const { error: aptError } = await supabase
-        .from('appointments')
-        .insert({
-          id: appointmentId,
-          slot_id: slotId,
-          seller_id: slot.seller_id,
-          client_name: clientName,
-          client_email: clientEmail,
-          client_phone: clientPhone,
-          type: slot.type,
-          status: 'confirmed'
-        });
-        
-      if (aptError) throw aptError;
+      const appointment = {
+        id: `apt_${Date.now()}`,
+        slotId,
+        date: slot.date,
+        time: slot.time,
+        clientName,
+        clientEmail,
+        clientPhone,
+        type: slot.type,
+        status: 'confirmed',
+        createdAt: new Date().toISOString()
+      };
       
-      // Aggiorna slot
-      const { error: updateError } = await supabase
-        .from('slots')
-        .update({ available: false })
-        .eq('id', slotId);
-        
-      if (updateError) throw updateError;
+      seller.appointments.push(appointment);
+      slot.available = false;
+      
+      writeDB(db);
       
       return {
         statusCode: 200,
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           success: true, 
-          appointmentId,
+          appointment,
           message: 'Appuntamento confermato'
         })
       };
     }
     
-    // PUT /slots - Aggiorna disponibilità
+    // PUT /slots - Aggiorna disponibilità (consulente)
     if (method === 'PUT') {
       const data = JSON.parse(event.body);
       const { sellerId, slotId, available, action } = data;
       
+      const db = readDB();
+      const seller = db.sellers[sellerId];
+      
+      if (!seller) {
+        return {
+          statusCode: 404,
+          body: JSON.stringify({ error: 'Seller not found' })
+        };
+      }
+      
+      // Azione: rigenera slot per prossimi 14 giorni
       if (action === 'regenerate') {
-        // Cancella slot vecchi e rigenera
-        await supabase
-          .from('slots')
-          .delete()
-          .eq('seller_id', sellerId);
-          
-        const success = await generateSlotsForSeller(sellerId);
-        
+        seller.slots = generateDefaultSlots();
+        writeDB(db);
         return {
           statusCode: 200,
-          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ 
-            success, 
+            success: true, 
             message: 'Slot rigenerati per i prossimi 14 giorni'
           })
         };
       }
       
+      // Modifica singolo slot
       if (slotId) {
-        // Se rendiamo non disponibile, verifica appuntamenti
-        if (!available) {
-          const { data: appointment } = await supabase
-            .from('appointments')
-            .select('*')
-            .eq('slot_id', slotId)
-            .eq('status', 'confirmed')
-            .single();
-            
-          if (appointment) {
-            await supabase
-              .from('appointments')
-              .update({ status: 'needs_reschedule' })
-              .eq('slot_id', slotId);
+        const slot = seller.slots.find(s => s.id === slotId);
+        if (slot) {
+          // Se slot diventa non disponibile e c'era appuntamento
+          if (!available && !slot.available) {
+            const appointment = seller.appointments.find(a => a.slotId === slotId && a.status === 'confirmed');
+            if (appointment) {
+              // Notifica da implementare
+              appointment.status = 'needs_reschedule';
+            }
           }
-        }
-        
-        const { error } = await supabase
-          .from('slots')
-          .update({ available })
-          .eq('id', slotId);
           
-        if (error) throw error;
-        
-        return {
-          statusCode: 200,
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ success: true })
-        };
+          slot.available = available;
+          writeDB(db);
+          
+          return {
+            statusCode: 200,
+            body: JSON.stringify({ success: true, slot })
+          };
+        }
       }
       
       return {
@@ -224,25 +219,39 @@ exports.handler = async (event, context) => {
       };
     }
     
-    // GET /appointments - Lista appuntamenti
-    if (method === 'GET' && path === '/appointments') {
-      const sellerId = event.queryStringParameters?.seller;
+    // DELETE /slots - Cancella appuntamento
+    if (method === 'DELETE') {
+      const data = JSON.parse(event.body);
+      const { sellerId, appointmentId } = data;
       
-      let query = supabase
-        .from('appointments')
-        .select('*, sellers(name, email), slots(date, time)')
-        .order('created_at', { ascending: false });
+      const db = readDB();
+      const seller = db.sellers[sellerId];
+      
+      if (!seller) {
+        return {
+          statusCode: 404,
+          body: JSON.stringify({ error: 'Seller not found' })
+        };
+      }
+      
+      const aptIndex = seller.appointments.findIndex(a => a.id === appointmentId);
+      if (aptIndex >= 0) {
+        const apt = seller.appointments[aptIndex];
+        const slot = seller.slots.find(s => s.id === apt.slotId);
+        if (slot) slot.available = true;
         
-      if (sellerId) query = query.eq('seller_id', sellerId);
-      
-      const { data: appointments, error } = await query;
-      
-      if (error) throw error;
+        seller.appointments.splice(aptIndex, 1);
+        writeDB(db);
+        
+        return {
+          statusCode: 200,
+          body: JSON.stringify({ success: true, message: 'Appuntamento cancellato' })
+        };
+      }
       
       return {
-        statusCode: 200,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ success: true, appointments })
+        statusCode: 404,
+        body: JSON.stringify({ error: 'Appointment not found' })
       };
     }
     

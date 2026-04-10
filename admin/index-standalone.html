@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin - Gestione Appuntamenti</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+            background: #1a1a2e; 
+            min-height: 100vh; 
+            padding: 20px; 
+            color: #333; 
+        }
+        .container { max-width: 900px; margin: 0 auto; }
+        .header { 
+            text-align: center; 
+            padding: 30px 20px; 
+            color: #fff; 
+            background: linear-gradient(135deg, #d4af37 0%, #c5a028 100%);
+            border-radius: 16px;
+            margin-bottom: 20px;
+        }
+        .header h1 { font-size: 1.8rem; font-weight: 300; }
+        .card { 
+            background: #fff; 
+            border-radius: 16px; 
+            padding: 25px; 
+            margin-bottom: 20px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+        }
+        .card h2 { 
+            color: #1a1a2e; 
+            margin-bottom: 20px; 
+            font-size: 1.3rem;
+            border-bottom: 2px solid #d4af37;
+            padding-bottom: 10px;
+        }
+        .seller-select { 
+            width: 100%; 
+            padding: 15px; 
+            font-size: 1rem; 
+            border: 2px solid #ddd; 
+            border-radius: 10px; 
+            margin-bottom: 20px;
+        }
+        .btn { 
+            padding: 12px 24px; 
+            background: linear-gradient(135deg, #d4af37 0%, #c5a028 100%); 
+            color: #fff; 
+            border: none; 
+            border-radius: 8px; 
+            font-size: 1rem; 
+            cursor: pointer; 
+            margin: 5px;
+        }
+        .slots-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+            gap: 10px;
+            margin-top: 20px;
+        }
+        .slot {
+            padding: 12px;
+            border-radius: 8px;
+            text-align: center;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .slot-available { background: #2ecc71; color: white; }
+        .slot-booked { background: #e74c3c; color: white; text-decoration: line-through; }
+        .status-message {
+            padding: 15px;
+            border-radius: 8px;
+            margin: 15px 0;
+            display: none;
+        }
+        .status-success { background: #d4edda; color: #155724; }
+        .status-error { background: #f8d7da; color: #721c24; }
+        .appointment {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 10px;
+            border-left: 4px solid #d4af37;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📅 Gestione Appuntamenti</h1>
+            <p>Admin Console - BABILONIA</p>
+        </div>
+
+        <div class="card" id="login-card">
+            <h2>🔐 Seleziona Consulente</h2>
+            <select id="seller-select" class="seller-select">
+                <option value="">-- Seleziona --</option>
+            </select>
+            <button class="btn" onclick="login()">Accedi</button>
+            <div id="login-status" class="status-message"></div>
+        </div>
+
+        <div id="dashboard" style="display: none;">
+            <div class="card">
+                <h2>⚡ Azioni</h2>
+                <button class="btn" onclick="generateSlots()">🔄 Genera Slot 14 Giorni</button>
+                <div id="action-status" class="status-message"></div>
+            </div>
+
+            <div class="card">
+                <h2>📅 Slot Disponibili</h2>
+                <div id="slots-container">Seleziona consulente...</div>
+            </div>
+
+            <div class="card">
+                <h2>👥 Appuntamenti</h2>
+                <div id="appointments-container">Caricamento...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Supabase CDN
+        const SUPABASE_URL = 'https://esgjushznmidzdhqsyyx.supabase.co';
+        const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVzZ2p1c2h6bm1pZHpkaHFzeXl4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU2NTYwMTcsImV4cCI6MjA5MTIzMjAxN30.cKWfWEkgRTtPKbUduGgNxX6gF18Gqkjg2bWn6twQTbs';
+        
+        let currentSeller = null;
+        let supabase = null;
+
+        // Carica Supabase
+        async function initSupabase() {
+            if (!window.supabase) {
+                await new Promise((resolve, reject) => {
+                    const script = document.createElement('script');
+                    script.src = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js';
+                    script.onload = resolve;
+                    script.onerror = reject;
+                    document.head.appendChild(script);
+                });
+            }
+            supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+        }
+
+        // Carica sellers
+        async function loadSellers() {
+            await initSupabase();
+            const { data, error } = await supabase.from('sellers').select('*').order('name');
+            if (error) return;
+            
+            const select = document.getElementById('seller-select');
+            data.forEach(seller => {
+                const option = document.createElement('option');
+                option.value = seller.id;
+                option.textContent = seller.name;
+                select.appendChild(option);
+            });
+        }
+
+        // Login
+        function login() {
+            const select = document.getElementById('seller-select');
+            currentSeller = parseInt(select.value);
+            if (!currentSeller) {
+                showStatus('login-status', 'Seleziona un consulente', false);
+                return;
+            }
+            document.getElementById('login-card').style.display = 'none';
+            document.getElementById('dashboard').style.display = 'block';
+            loadSlots();
+            loadAppointments();
+        }
+
+        // Genera slot
+        async function generateSlots() {
+            showStatus('action-status', 'Generazione in corso...', true);
+            
+            const slots = [];
+            const today = new Date();
+            const times = ['09:00','10:00','11:00','14:00','15:00','16:00'];
+            
+            for (let i = 0; i < 14; i++) {
+                const date = new Date(today); date.setDate(today.getDate() + i);
+                const dateStr = date.toISOString().split('T')[0];
+                times.forEach(time => {
+                    slots.push({ seller_id: currentSeller, date: dateStr, time, available: true, type: 'conoscitivo' });
+                });
+            }
+            
+            // Elimina vecchi
+            await supabase.from('slots').delete().eq('seller_id', currentSeller).gte('date', today.toISOString().split('T')[0]);
+            
+            // Inserisci nuovi
+            const { error } = await supabase.from('slots').insert(slots);
+            
+            if (!error) {
+                showStatus('action-status', `Generati ${slots.length} slot`, true);
+                loadSlots();
+            }
+        }
+
+        // Carica slot
+        async function loadSlots() {
+            const container = document.getElementById('slots-container');
+            container.innerHTML = 'Caricamento...';
+            
+            const today = new Date().toISOString().split('T')[0];
+            const { data, error } = await supabase
+                .from('slots')
+                .select('*')
+                .eq('seller_id', currentSeller)
+                .gte('date', today)
+                .order('date').order('time');
+            
+            if (error || data.length === 0) {
+                container.innerHTML = 'Nessuno slot. Genera slot per iniziare.';
+                return;
+            }
+            
+            let html = '<div class="slots-grid">';
+            data.forEach(slot => {
+                const cls = slot.available ? 'slot-available' : 'slot-booked';
+                html += `<div class="slot ${cls}" onclick="toggleSlot(${slot.id}, ${!slot.available})">${slot.time}</div>`;
+            });
+            html += '</div>';
+            container.innerHTML = html;
+        }
+
+        // Toggle slot
+        async function toggleSlot(slotId, available) {
+            await supabase.from('slots').update({ available }).eq('id', slotId);
+            loadSlots();
+        }
+
+        // Carica appuntamenti
+        async function loadAppointments() {
+            const container = document.getElementById('appointments-container');
+            const { data, error } = await supabase
+                .from('appointments')
+                .select('*, slots(date, time)')
+                .eq('seller_id', currentSeller)
+                .order('created_at', { ascending: false });
+            
+            if (error || data.length === 0) {
+                container.innerHTML = 'Nessun appuntamento';
+                return;
+            }
+            
+            let html = '';
+            data.forEach(apt => {
+                html += `<div class="appointment">
+                    <strong>${apt.client_name}</strong><br>
+                    📅 ${apt.slots?.date} ⏰ ${apt.slots?.time}<br>
+                    📧 ${apt.client_email}
+                </div>`;
+            });
+            container.innerHTML = html;
+        }
+
+        // Utility
+        function showStatus(id, msg, ok) {
+            const el = document.getElementById(id);
+            el.textContent = msg;
+            el.className = 'status-message ' + (ok ? 'status-success' : 'status-error');
+            el.style.display = 'block';
+            setTimeout(() => el.style.display = 'none', 3000);
+        }
+
+        // Init
+        loadSellers();
+    </script>
+</body>
+</html>

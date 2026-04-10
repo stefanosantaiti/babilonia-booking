@@ -20,10 +20,10 @@ Deno.serve(async (req) => {
     const today = new Date()
     const todayStr = today.toISOString().split('T')[0]
 
-    // Trova TUTTI i consulenti attivi
+    // Trova TUTTI i consulenti attivi (con telegram_chat_id se presente)
     const { data: sellers, error: sellersError } = await supabase
       .from('sellers')
-      .select('id, name, email, zoom_link')
+      .select('id, name, email, zoom_link, telegram_chat_id')
       .eq('active', true)
 
     if (sellersError) throw sellersError
@@ -87,13 +87,14 @@ ${apt.telegram ? `💬 Telegram: @${apt.telegram.replace('@', '')}` : ''}
 `
       }
 
-      // Invia a te (admin) per ora - poi possiamo configurare chat_id per ogni consulente
+      // Invia al consulente specifico (se ha telegram_chat_id, altrimenti ad admin)
+      const chatId = seller.telegram_chat_id || ADMIN_CHAT_ID
       try {
         await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            chat_id: ADMIN_CHAT_ID,
+            chat_id: chatId,
             text: telegramMsg,
             parse_mode: 'Markdown',
             disable_web_page_preview: true
